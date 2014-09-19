@@ -10,9 +10,9 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -export([main/1, 
-         parse/4
+         parse/4]).
 
-         ]).
+-define(PORTS_MAP, ports_map).
 
 %%%=============================================================================
 %%% Api functions
@@ -35,6 +35,7 @@ parse([Filename, FileTemplate, ControllerIP, Port]) ->
             ControllerIP :: string(),
             Port :: integer()) -> {linc, [tuple()]}.
 parse(Filename, FileTemplate, ControllerIP, Port) ->
+    init_port_mapping_ets(),
     {ok, Binary} = file:read_file(Filename),
     {ok, [Config]} = file:consult(FileTemplate),
     Json = jsx:decode(Binary),
@@ -48,6 +49,16 @@ parse(Filename, FileTemplate, ControllerIP, Port) ->
 %%%=============================================================================
 %%% Internal Functions
 %%%=============================================================================
+
+init_port_mapping_ets() ->
+    ets:new(?PORTS_MAP, [named_table]).
+
+map_capable_to_logical_switch_port(CapablePortNo, LogicalPort) ->
+    true = ets:insert_new(?PORTS_MAP, {CapablePortNo, LogicalPort}).
+
+get_mapping_for_capable_port(LogicalPort) ->
+    [[CapablePortNo]] = ets:match(?PORTS_MAP, {'$1', LogicalPort}),
+    CapablePortNo.
 
 packet2optical_links(LinkConfig) ->
     lists:filter(fun(X) -> lists:member({<<"type">>, <<"pktOptLink">>}, X) end,
@@ -113,34 +124,44 @@ get_optical_links(LinkConfig, SwitchConfig) ->
 
 get_optical_link_pairs(LinkConfig, SwitchConfig) ->
     DpidsToNumber = get_dpids2number(SwitchConfig),
-    lists:map(fun(X) -> 
+    lists:map(fun(X) ->
         list_to_tuple(parse_optical_link(X, DpidsToNumber))
     end,optical_links(LinkConfig)).
 
-optical_port_element([{_SwitchNum1, PortNumber1},
-                      {_SwitchNum2, PortNumber2}]) ->
-    [{port, PortNumber1, [{interface, "dummy"}, {type, optical}]},
-     {port, PortNumber2, [{interface, "dummy"}, {type, optical}]}].
+optical_port_element(LogicalPortsFromOpticalLink,  InitCapablePortNo) ->
+    Ports =
+        [begin
+             {Inc, {_SwId, _LogicalPortNo} = LP} = X,
+             CapablePortNo = InitCapablePortNo + Inc,
+             map_capable_to_logical_switch_port(CapablePortNo, LP),
+             {port, CapablePortNo, [{interface, "dummy"}, {type, optical}]}
+         end
+         || X <- lists:zip([0,1], LogicalPortsFromOpticalLink)],
+    {Ports, InitCapablePortNo + 2}.
 
-p2o_port_element({_Dpid, PortNumber}) ->
-    {port, PortNumber, [{interface, "tap" ++ integer_to_list(PortNumber)}]}.
+p2o_port_element({_SwId, _PortNumber} = LP, CapablePortNo) ->
+    map_capable_to_logical_switch_port(CapablePortNo, LP),
+    CapablePort = {port, CapablePortNo,
+            [{interface, "tap" ++ integer_to_list(CapablePortNo)}]},
+    {CapablePort, CapablePortNo + 1}.
 
 get_switch_ports(SwitchDpid, OpticalLinks, P2OLinkPorts) ->
     List = lists:flatten(OpticalLinks ++ P2OLinkPorts),
-    [Port || {Dpid, Port} <- List, Dpid == SwitchDpid].
+    [{SwitchDpid, Port} || {Dpid, Port} <- List, Dpid == SwitchDpid].
 
 get_capable_switch_ports(LinkConfig, SwitchConfig) ->
-    List = lists:flatten(lists:map(fun optical_port_element/1,
-                          get_optical_links(LinkConfig, SwitchConfig)) ++
-                lists:map(fun p2o_port_element/1,
-                          get_p2o_links_ports(LinkConfig, SwitchConfig))),
-    lists:usort(List).
+    {OpticalCapablePorts, NextCapablePortNo} =
+        lists:mapfoldl(fun optical_port_element/2, _InitCapablePortNo = 1,
+                       get_optical_links(LinkConfig, SwitchConfig)),
+    {PacketCapablePorts, _} =
+        lists:mapfoldl(fun p2o_port_element/2, NextCapablePortNo,
+                       get_p2o_links_ports(LinkConfig, SwitchConfig)),
+    lists:flatten(OpticalCapablePorts ++ PacketCapablePorts).
 
 generate_switch_element(SwitchDpid, OpticalLinks, OpticalLinkPorts,
                         ControllerIP, Port, DpidsToNumber) ->
-    Ports = lists:usort(
-            get_switch_ports(proplists:get_value(SwitchDpid, DpidsToNumber),
-                                                 OpticalLinks, OpticalLinkPorts)),
+    Ports = get_switch_ports(proplists:get_value(SwitchDpid, DpidsToNumber),
+                                                 OpticalLinks, OpticalLinkPorts),
     {switch, proplists:get_value(SwitchDpid, DpidsToNumber),
      [{backend,linc_us4_oe},
       {datapath_id, binary_to_list(SwitchDpid)},
@@ -149,8 +170,9 @@ generate_switch_element(SwitchDpid, OpticalLinks, OpticalLinkPorts,
       {queues_status,disabled},
       {ports, lists:map(fun port_queue_element/1, Ports)}]}.
 
-port_queue_element(PortNumber) ->
-    {port, PortNumber, {queues, []}}.
+port_queue_element({_SwitchId, LogicalPortNo} = LP) ->
+    CapablePortNo = get_mapping_for_capable_port(LP),
+    {port, CapablePortNo, [{queues, []}, {port_no, LogicalPortNo}]}.
 
 generate_linc_element(SwitchConfig, LinkConfig, ControllerIP, Port) ->
     {linc,
@@ -176,9 +198,9 @@ generator_test() ->
      [{of_config,disabled},
       {software_desc,<<"LINC-OE OpenFlow Software Switch 1.1">>},
       {capable_switch_ports,
-          [{port,10,[{interface,"tap10"}]},
-           {port,20,[{interface,"dummy"},{type,optical}]},
-           {port,21,[{interface,"dummy"},{type,optical}]}]},
+          [{port,1,[{interface,"dummy"},{type,optical}]},
+           {port,2,[{interface,"dummy"},{type,optical}]},
+           {port,3,[{interface,"tap3"}]}]},
       {capable_switch_queues,[]},
       {optical_links,[{{1,20},{2,21}}]},
       {logical_switches,
@@ -188,14 +210,17 @@ generator_test() ->
                 {controllers,[{"Switch0-Controller","localhost",4343,tcp}]},
                 {controllers_listener,disabled},
                 {queues_status,disabled},
-                {ports,[{port,10,{queues,[]}},{port,20,{queues,[]}}]}]},
+                {ports,[{port,1,[{queues,[]}, {port_no, 20}]},
+                        {port,3,[{queues,[]}, {port_no, 10}]}]
+                }]},
            {switch,2,
                [{backend,linc_us4_oe},
                 {datapath_id,"00:00:ff:ff:ff:ff:ff:03"},
                 {controllers,[{"Switch0-Controller","localhost",4343,tcp}]},
                 {controllers_listener,disabled},
                 {queues_status,disabled},
-                {ports,[{port,21,{queues,[]}}]}]}]}]},
+                {ports,[{port,2,[{queues,[]}, {port_no, 21}]}]}
+               ]}]}]},
  {epcap,[{verbose,false},{stats_interval,10}]},
  {enetconf,
      [{capabilities,
