@@ -54,7 +54,14 @@ init_port_mapping_ets() ->
     ets:new(?PORTS_MAP, [named_table]).
 
 map_capable_to_logical_switch_port(CapablePortNo, LogicalPort) ->
-    true = ets:insert_new(?PORTS_MAP, {CapablePortNo, LogicalPort}).
+    %% Check that we haven't mapped this logical port to something
+    %% else already.
+    case ets:match(?PORTS_MAP, {'$1', LogicalPort}) of
+        [] ->
+            true = ets:insert_new(?PORTS_MAP, {CapablePortNo, LogicalPort});
+        [_|_] ->
+            error({duplicate_port, LogicalPort})
+    end.
 
 get_mapping_for_capable_port(LogicalPort) ->
     [[CapablePortNo]] = ets:match(?PORTS_MAP, {'$1', LogicalPort}),
@@ -150,13 +157,28 @@ get_switch_ports(SwitchDpid, OpticalLinks, P2OLinkPorts) ->
     [{SwitchDpid, Port} || {Dpid, Port} <- List, Dpid == SwitchDpid].
 
 get_capable_switch_ports(LinkConfig, SwitchConfig) ->
-    {OpticalCapablePorts, NextCapablePortNo} =
-        lists:mapfoldl(fun optical_port_element/2, _InitCapablePortNo = 1,
-                       get_optical_links(LinkConfig, SwitchConfig)),
-    {PacketCapablePorts, _} =
-        lists:mapfoldl(fun p2o_port_element/2, NextCapablePortNo,
-                       get_p2o_links_ports(LinkConfig, SwitchConfig)),
-    lists:flatten(OpticalCapablePorts ++ PacketCapablePorts).
+    try
+        {OpticalCapablePorts, NextCapablePortNo} =
+            lists:mapfoldl(fun optical_port_element/2, _InitCapablePortNo = 1,
+                           get_optical_links(LinkConfig, SwitchConfig)),
+        {PacketCapablePorts, _} =
+            lists:mapfoldl(fun p2o_port_element/2, NextCapablePortNo,
+                           get_p2o_links_ports(LinkConfig, SwitchConfig)),
+        lists:flatten(OpticalCapablePorts ++ PacketCapablePorts)
+    catch
+        error:{duplicate_port, {SwitchId, LogicalPortNo}} ->
+            DpidsToNumber = get_dpids2number(SwitchConfig),
+            {Dpid, SwitchId} = lists:keyfind(SwitchId, 2, DpidsToNumber),
+            [SwitchEntry] = [Entry ||
+                                Entry <- SwitchConfig,
+                                Dpid =:= proplists:get_value(<<"nodeDpid">>, Entry)],
+            SwitchName = proplists:get_value(<<"name">>, SwitchEntry),
+            io:format(
+              standard_error,
+              "ERROR: Port number ~b used more than once for switch '~s' (~s)~n",
+              [LogicalPortNo, SwitchName, Dpid]),
+            erlang:halt(1)
+    end.
 
 generate_switch_element(SwitchDpid, OpticalLinks, OpticalLinkPorts,
                         ControllerIP, Port, DpidsToNumber) ->
