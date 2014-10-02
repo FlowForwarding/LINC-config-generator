@@ -38,13 +38,32 @@ parse(Filename, FileTemplate, ControllerIP, Port) ->
     init_port_mapping_ets(),
     {ok, Binary} = file:read_file(Filename),
     {ok, [Config]} = file:consult(FileTemplate),
-    Json = jsx:decode(Binary),
+    Json = jsx:decode(Binary,
+                      [{error_handler,
+                        fun(RestBin, {decoder, State, _, _, _}, _Config) ->
+                                json_error_handler(Filename, Binary, RestBin, State)
+                        end}]),
     SwitchConfig = proplists:get_value(<<"switchConfig">>, Json),
     LinkConfig = proplists:get_value(<<"linkConfig">>, Json),
     Linc = generate_linc_element(SwitchConfig, LinkConfig, ControllerIP, Port),
     FinalConfig = [Linc] ++ Config,
     ok = file:write_file("sys.config",io_lib:fwrite("~p.\n", [FinalConfig])).
 
+json_error_handler(Filename, Binary, RestBin, DecoderState) ->
+    {ErrorPos, _} = binary:match(Binary, RestBin),
+    Newlines = binary:matches(Binary, <<"\n">>, [{scope, {0, ErrorPos}}]),
+    LineNo = 1 + length(Newlines),
+    case Newlines of
+        [] ->
+            LastNewlinePos = -1;
+        [_|_] ->
+            LastNewline = lists:last(Newlines),
+            {LastNewlinePos, _} = LastNewline
+    end,
+    ColNo = ErrorPos - LastNewlinePos,
+    io:format(standard_error, "~s:~b:~b: JSON error, decoder state '~p'~n",
+              [Filename, LineNo, ColNo, DecoderState]),
+    erlang:halt(1).
 
 %%%=============================================================================
 %%% Internal Functions
