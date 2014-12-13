@@ -25,8 +25,8 @@ Defaults values are:
 
 * controller_port: `6653`,
 * controller_ip: `localhost`,
-* topology_template: `$PWD/json_example.json`,
-* config_template: `$PWD/sys.config.template`.
+* topology: `priv/json_example.json`,
+* config_template: `priv/sys.config.template`.
 
 ## Topology file ##
 

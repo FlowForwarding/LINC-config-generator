@@ -1,7 +1,7 @@
 .PHONY: compile test run
 
-topology ?= $$PWD/json_example.json
-config_template ?= $$PWD/sys.config.template
+topology ?= $$PWD/priv/json_example.json
+config_template ?= $$PWD/priv/sys.config.template
 controller_ip ?= localhost
 controller_port ?= 6653
 
