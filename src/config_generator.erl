@@ -9,10 +9,16 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--export([main/1, 
+-export([main/1,
          parse/4]).
 
 -define(PORTS_MAP, ports_map).
+-define(PRIV_DIR, filename:join(os:getenv("PWD"), "priv")).
+-define(GENERATED_SYS_CONFIG, filename:join([?PRIV_DIR, "sys.config"])).
+-define(NOW_STRING, integer_to_list(calendar:datetime_to_gregorian_seconds(
+                                        calendar:now_to_datetime(now())))).
+-define(TEMPLATE_SYS_CONFIG, filename:join([?PRIV_DIR, "sys.config.template"])).
+-define(JSON_EXAMPLE, filename:join([?PRIV_DIR, "json_example.json"])).
 
 %%%=============================================================================
 %%% Api functions
@@ -227,71 +233,67 @@ generate_linc_element(SwitchConfig, LinkConfig, ControllerIP, Port) ->
                                               ControllerIP, Port)}]}.
 
 generator_test() ->
-  file:copy("sys.config","sys.config."++integer_to_list(
-            calendar:datetime_to_gregorian_seconds(calendar:now_to_datetime(now()))
-        )),
-  io:format("",[]),
-  ok = main([os:getenv("PWD")++"/json_example.json",
-             os:getenv("PWD")++"/sys.config.template",
-             "localhost",
-             "4343"]),
-  Expect = {ok,[[{linc,
-     [{of_config,disabled},
-      {software_desc,<<"LINC-OE OpenFlow Software Switch 1.1">>},
-      {capable_switch_ports,
-          [{port,1,[{interface,"dummy"},{type,optical}]},
-           {port,2,[{interface,"dummy"},{type,optical}]},
-           {port,3,[{interface,"tap3"}]}]},
-      {capable_switch_queues,[]},
-      {optical_links,[{{1,20},{2,21}}]},
-      {logical_switches,
-          [{switch,1,
-               [{backend,linc_us4_oe},
-                {datapath_id,"00:00:ff:ff:ff:ff:ff:02"},
-                {controllers,[{"Switch0-Controller","localhost",4343,tcp}]},
-                {controllers_listener,disabled},
-                {queues_status,disabled},
-                {ports,[{port,1,[{queues,[]}, {port_no, 20}]},
-                        {port,3,[{queues,[]}, {port_no, 10}]}]
-                }]},
-           {switch,2,
-               [{backend,linc_us4_oe},
-                {datapath_id,"00:00:ff:ff:ff:ff:ff:03"},
-                {controllers,[{"Switch0-Controller","localhost",4343,tcp}]},
-                {controllers_listener,disabled},
-                {queues_status,disabled},
-                {ports,[{port,2,[{queues,[]}, {port_no, 21}]}]}
-               ]}]}]},
- {epcap,[{verbose,false},{stats_interval,10}]},
- {enetconf,
-     [{capabilities,
-          [{base,{1,0}},
-           {base,{1,1}},
-           {startup,{1,0}},
-           {'writable-running',{1,0}}]},
-      {callback_module,linc_ofconfig},
-      {sshd_ip,any},
-      {sshd_port,1830},
-      {sshd_user_passwords,[{"linc","linc"}]}]},
- {lager,
-     [{handlers,
-          [{lager_console_backend,info},
-           {lager_file_backend,
-               [{"log/error.log",error,10485760,"$D0",5},
-                {"log/console.log",info,10485760,"$D0",5}]}]}]},
- {sasl,
-     [{sasl_error_logger,{file,"log/sasl-error.log"}},
-      {errlog_type,error},
-      {error_logger_mf_dir,"log/sasl"},
-      {error_logger_mf_maxbytes,10485760},
-      {error_logger_mf_maxfiles,5}]},
- {sync,[{excluded_modules,[procket]}]}]]},
+    file:copy(?GENERATED_SYS_CONFIG,
+              ?GENERATED_SYS_CONFIG ++ ?NOW_STRING),
+    io:format("",[]),
+    ok = main([?JSON_EXAMPLE, ?TEMPLATE_SYS_CONFIG, "localhost", "4343"]),
+    Expect = {ok,[[{linc,
+                    [{of_config,disabled},
+                     {software_desc,<<"LINC-OE OpenFlow Software Switch 1.1">>},
+                     {capable_switch_ports,
+                      [{port,1,[{interface,"dummy"},{type,optical}]},
+                       {port,2,[{interface,"dummy"},{type,optical}]},
+                       {port,3,[{interface,"tap3"}]}]},
+                     {capable_switch_queues,[]},
+                     {optical_links,[{{1,20},{2,21}}]},
+                     {logical_switches,
+                      [{switch,1,
+                        [{backend,linc_us4_oe},
+                         {datapath_id,"00:00:ff:ff:ff:ff:ff:02"},
+                         {controllers,[{"Switch0-Controller","localhost",4343,tcp}]},
+                         {controllers_listener,disabled},
+                         {queues_status,disabled},
+                         {ports,[{port,1,[{queues,[]}, {port_no, 20}]},
+                                 {port,3,[{queues,[]}, {port_no, 10}]}]
+                         }]},
+                       {switch,2,
+                        [{backend,linc_us4_oe},
+                         {datapath_id,"00:00:ff:ff:ff:ff:ff:03"},
+                         {controllers,[{"Switch0-Controller","localhost",4343,tcp}]},
+                         {controllers_listener,disabled},
+                         {queues_status,disabled},
+                         {ports,[{port,2,[{queues,[]}, {port_no, 21}]}]}
+                        ]}]}]},
+                   {epcap,[{verbose,false},{stats_interval,10}]},
+                   {enetconf,
+                    [{capabilities,
+                      [{base,{1,0}},
+                       {base,{1,1}},
+                       {startup,{1,0}},
+                       {'writable-running',{1,0}}]},
+                     {callback_module,linc_ofconfig},
+                     {sshd_ip,any},
+                     {sshd_port,1830},
+                     {sshd_user_passwords,[{"linc","linc"}]}]},
+                   {lager,
+                    [{handlers,
+                      [{lager_console_backend,info},
+                       {lager_file_backend,
+                        [{"log/error.log",error,10485760,"$D0",5},
+                         {"log/console.log",info,10485760,"$D0",5}]}]}]},
+                   {sasl,
+                    [{sasl_error_logger,{file,"log/sasl-error.log"}},
+                     {errlog_type,error},
+                     {error_logger_mf_dir,"log/sasl"},
+                     {error_logger_mf_maxbytes,10485760},
+                     {error_logger_mf_maxfiles,5}]},
+                   {sync,[{excluded_modules,[procket]}]}]]},
 
-      {ok,[Res]} = file:consult("sys.config"),
+    {ok,[Res]} = file:consult("sys.config"),
 
-      %% io:format("optical_links:~p\n",[proplists:get_value(optical_links,proplists:get_value(linc,Res))]),
+    %% io:format("optical_links:~p\n",[proplists:get_value(optical_links,proplists:get_value(linc,Res))]),
 
 
-      ?assertEqual(Expect,{ok,[Res]}).
+    ?assertEqual(Expect,{ok,[Res]}).
 
 
